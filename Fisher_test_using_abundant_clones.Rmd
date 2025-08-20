@@ -1,0 +1,86 @@
+---
+title: "Fisher test using the 0.01% of most abundant clonotypes"
+output: html_notebook
+---
+
+ ###Fisher test##############
+
+```{r}
+setwd("~/Desktop/Filtered_contig_files/Adaptive/testing_final_code/V3/")
+temp3 = list.files(path = "~/Desktop/Filtered_contig_files/Adaptive/testing_final_code/V3/", pattern="*.tsv")
+
+test <- gsub(".*(T[S|T]\\d{4}).tsv", "\\1", temp3)
+
+merged_list = lapply(temp3, read_tsv)
+names(merged_list) <- test
+```
+
+
+```{r}
+#keep only columsn of interest and make cdr3_amino_acid column rownames
+subset_columns <-function(x){
+  y <- x[,c(2,3,4)] #I select for cdr3_amino_acid, MTB_present and PT_absent columns
+  y <- column_to_rownames(y, var = "cdr3_amino_acid")
+  return(y)
+}
+
+```
+
+
+```{r}
+merged_list2 <- lapply(merged_list, subset_columns)
+#convert NA to 0
+merged_list2 <- lapply(merged_list2, function(df) {
+  df[is.na(df)] <- 0
+  return(df)
+})
+
+
+merged_list2[[2]]
+```
+
+
+```{r}
+##first define the function to apply
+Fisher <- function(x){
+## input is a row of your data
+## creating a table from each row
+     x <- matrix(x,byrow =TRUE,nrow=2)
+### this will return the p value
+  return(fisher.test(x)$p.value)
+}
+```
+
+
+```{r}
+for (i in 1:length(merged_list2)) {
+  merged_list2[[i]]$RowSums <- rowSums(merged_list2[[i]])
+  #merged_list2[[i]][order(merged_list2[[i]]$rowSums),]
+}
+
+#order by Rowsums
+merged_list2 <- lapply(merged_list2, function(df) df[order(df$RowSums, decreasing = TRUE),])
+
+# Keep only the first 50% of rows in each data frame
+merged_list2 <- lapply(merged_list2, function(df) head(df, n = nrow(df) * 0.01))
+```
+
+
+```{r}
+setwd("~/Desktop/Filtered_contig_files/Adaptive/testing_final_code/V3/Fisher_test_result/")
+for (i in 1:length(merged_list2)) {
+  print(names(merged_list2)[i])
+  if (nrow(merged_list2[[i]]) == 0) {
+        next}
+  merged_list2[[i]] <- merged_list2[[i]][, 1:2]
+  MTB_total = sum(merged_list2[[i]]$MTB_present)
+  PT_total = sum(merged_list2[[i]]$PT_present)
+  Grand_total = MTB_total + PT_total
+  merged_list2[[i]]$MTB_absent <- MTB_total - merged_list2[[i]]$MTB_present
+  merged_list2[[i]]$PT_absent <-PT_total - merged_list2[[i]]$PT_present
+  P_Values <- as.data.frame(apply(merged_list2[[i]],1,Fisher))
+  result <- merge(merged_list2[[i]], P_Values, by = 'row.names')
+  colnames(result)[6] <- "p_value"
+  write_tsv(result, paste0(names(merged_list2)[i], ".tsv"))
+}
+```
