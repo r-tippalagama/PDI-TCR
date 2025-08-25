@@ -1,0 +1,916 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+#devtools::install_github("satijalab/seurat", ref = "develop")
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+MTB20.CD4 <- readRDS("~/Desktop/LTBI_ATB_110722/MTB20_TCR_information_removed.RDS")
+```
+
+```{r}
+DimPlot(MTB20.CD4)
+```
+
+
+
+```{r}
+top50 <- as.data.frame(read_tsv("~/Desktop/LTBI_ATB_110722/Draft/top_50_Markers.tsv"))
+
+top50 <- top50 %>% 
+  group_by(cluster) %>% 
+  arrange(desc(avg_log2FC), p_val_adj, .by_group = TRUE)
+
+top_5_markers <- top50 %>% 
+  ungroup() %>%
+  distinct(gene, .keep_all = TRUE) %>%
+  group_by(cluster) %>%
+  slice_head(n = 5) %>%
+  pull(gene)
+```
+
+
+```{r}
+th1 <- c("HLA-DRA", "HLA-DRB1", "HLA-DRB5")
+```
+
+```{r}
+DotPlot(MTB20.CD4, features = th1, assay = "SCT", scale.by = "size") + scale_colour_gradient2(low = "grey", mid = "white", high = "red") + coord_flip() + scale_size(range = c(5, 20)) +
+  theme(text = element_text(face = "bold"),
+        axis.text.x=element_text(angle=10, size=35),
+        axis.title = element_text(size=35,face="bold"),
+        axis.text.y = element_text(size=35,face="bold"),
+        legend.text=element_text(size=25),
+        legend.title=element_text(size=25))
+
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/DR_dotplot_markers.png", height = 8.5, width = 20, units = "in")
+```
+
+
+
+```{r}
+#contig files 
+A <- read.csv("~/Desktop/Filtered_contig_files/A_filtered_contig_annotations.csv")
+#format barcodes because during integration the seurat adds a "unique indentifier" to each barcode from each library
+A$barcode <- paste0(A$barcode, "_1")
+#A['MTB20'] <- "A"
+
+B <- read.csv("~/Desktop/Filtered_contig_files/B_filtered_contig_annotations.csv")
+B$barcode <- paste0(B$barcode, "_2")
+#B['MTB20'] <- "B"
+
+C <- read.csv("~/Desktop/Filtered_contig_files/C_filtered_contig_annotations.csv")
+C$barcode <- paste0(C$barcode, "_3")
+#C['MTB20'] <- "C"
+
+D <- read.csv("~/Desktop/Filtered_contig_files/D_filtered_contig_annotations.csv")
+D$barcode <- paste0(D$barcode, "_4")
+#D['MTB20'] <- "D"
+
+E <- read.csv("~/Desktop/Filtered_contig_files/E_filtered_contig_annotations.csv")
+E$barcode <- paste0(E$barcode, "_5")
+#E['MTB20'] <- "E"
+
+G <- read.csv("~/Desktop/Filtered_contig_files/G_filtered_contig_annotations.csv")
+G$barcode <- paste0(G$barcode, "_6")
+#G['MTB20'] <- "G"
+
+H <- read.csv("~/Desktop/Filtered_contig_files/H_filtered_contig_annotations.csv")
+H$barcode <- paste0(H$barcode, "_7")
+#H['MTB20'] <- "H"
+
+I <- read.csv("~/Desktop/Filtered_contig_files/I_filtered_contig_annotations.csv")
+I$barcode <- paste0(I$barcode, "_8")
+#I['MTB20'] <- "I"
+
+J <- read.csv("~/Desktop/Filtered_contig_files/J_filtered_contig_annotations.csv")
+J$barcode <- paste0(J$barcode, "_9")
+#J['MTB20'] <- "J"
+
+L <- read.csv("~/Desktop/Filtered_contig_files/L_filtered_contig_annotations.csv")
+L$barcode <- paste0(L$barcode, "_10")
+#L['MTB20'] <- "L"
+
+HIPC_3 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_3_filtered_contig_annotations.csv")
+HIPC_3$barcode <- paste0(HIPC_3$barcode, "_11")
+
+HIPC_4 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_4_filtered_contig_annotations.csv")
+HIPC_4$barcode <- paste0(HIPC_4$barcode, "_12")
+
+TCR_total <- as_tibble(rbind(A,B,C,D,E,G,H,I,J,L, HIPC_3, HIPC_4))
+```
+
+```{r}
+new_contig_file <- data.table::as.data.table(TCR_total[,c("barcode", "cdr3", "chain")])
+TRA <- new_contig_file %>% filter(chain == "TRA")
+TRB <- new_contig_file %>% filter(chain == "TRB")
+
+colnames(TRA)[2] <- "TRA"
+colnames(TRB)[2] <- "TRB"
+
+new_contig_file2 <- full_join(TRA, TRB, by = "barcode", relationship = "many-to-many")
+```
+
+```{r}
+metadata <- MTB20.CD4@meta.data
+metadata <- rownames_to_column(metadata, var = "barcode")
+new_metadata <- left_join(metadata, new_contig_file2, by = "barcode")
+new_metadata2 <- new_metadata %>% filter(Cohort == "LTBI")
+donors <- unique(new_metadata2$donor)
+```
+
+```{r}
+MTB_V1 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_full/V1_MTB_FC_10_MTB20_abundant_clones.tsv")
+MTB_pilot <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_pilot/V1_MTB_FC_10_pilot_MTB20_abundant_clones.tsv")
+MTB_V3 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_full/V3_MTB_FC_10_MTB20_abundant_clones.tsv")
+
+MTB <- rbind(MTB_V1, MTB_pilot, MTB_V3)
+MTB <- MTB %>% filter(donor %in% donors)
+
+Multi_V1 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_full/V1_Multi_FC_10_MTB20_abundant_clones.tsv")
+Multi_pilot <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_pilot/V1_Multi_FC_10_pilot_MTB20_abundant_clones.tsv")
+Multi_V3 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/081224/antigen_specific_TCRs_full/V3_Multi_FC_10_MTB20_abundant_clones.tsv")
+
+Multi <- rbind(Multi_V1, Multi_pilot, Multi_V3)
+Multi <- Multi %>% filter(donor %in% donors) #additional step to ensure that sequences mapped are only belonging to the respective donors
+```
+
+```{r}
+Multi <- Multi %>% pull(Row.names)
+MTB <- MTB %>% pull(Row.names)
+
+new_metadata2$MTB <-
+  case_when(
+    new_metadata2$TRB %in% MTB ~ "MTB",
+    new_metadata2$TRB %in% Multi ~ "Multi")
+```
+
+```{r}
+write_tsv(new_metadata2, "~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_LTBI_test_abundant_clones.tsv")
+```
+
+
+#how many TCRs are mapped back at the single cell level
+```{r}
+#Paired TRA and TRB 
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_ATB_test_abundant_clones.tsv")
+new_metadata4 <- new_metadata2 %>% filter(!donor %in% c("TT0105, TS0012") & Cohort == "ATB")
+ATB_donors <- unique(new_metadata4$donor)
+
+x <- new_metadata4 %>% filter(donor %in% ATB_donors & MTB == "MTB" & chain.x == "TRA" & chain.y == "TRB") %>% group_by(Cohort_Visit) %>% summarise("tcr" = n_distinct(TRB))
+
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_LTBI_test_abundant_clones.tsv")
+new_metadata4 <- new_metadata2 %>% filter(Cohort == "LTBI")
+LTBI_donors <- unique(new_metadata4$donor)
+
+y <- new_metadata4 %>% filter(donor %in% LTBI_donors & MTB == "MTB" & chain.x == "TRA" & chain.y == "TRB") %>% group_by(Cohort_Visit) %>% summarise("tcr" = n_distinct(TRB))
+```
+
+#how many cells are mapped back at the single cell level. Only paired chains considered. 
+```{r}
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_ATB_test_abundant_clones.tsv")
+new_metadata4 <- new_metadata2 %>% filter(!donor %in% c("TT0105, TS0012") & Cohort == "ATB")
+ATB_donors <- unique(new_metadata4$donor)
+
+x <- new_metadata4 %>% filter(donor %in% ATB_donors & MTB == "Multi" & chain.x == "TRA" & chain.y == "TRB") %>% group_by(Cohort_Visit, MTB) %>% summarise("clone_size" = n())
+
+
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_LTBI_test_abundant_clones.tsv")
+new_metadata4 <- new_metadata2 %>% filter(Cohort == "LTBI")
+LTBI_donors <- unique(new_metadata4$donor)
+
+y <- new_metadata4 %>% filter(donor %in% LTBI_donors & MTB == "Multi" & chain.x == "TRA" & chain.y == "TRB") %>% group_by(MTB) %>% summarise("clone_size" = n())
+```
+
+#total number of cells and TCRs generated by PDI-TCR
+```{r}
+MTB_pilot <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_pilot/V1_MTB_FC_10_pilot_MTB20_abundant_clones.tsv")
+MTB_pilot$visit <- "V1"
+
+MTB_V1_full <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_full/V1_MTB_FC_10_MTB20_abundant_clones.tsv")
+MTB_V1_full$visit <- "V1"
+
+MTB_V3_full <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_full/V3_MTB_FC_10_MTB20_abundant_clones.tsv")
+MTB_V3_full$visit <- "V3"
+
+MTB <- rbind(MTB_pilot, MTB_V1_full, MTB_V3_full)
+MTB$specificity1 <- "MTB"
+
+
+Multi_pilot <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_pilot/V1_Multi_FC_10_pilot_MTB20_abundant_clones.tsv")
+Multi_pilot$visit <- "V1"
+
+Multi_V1_full <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_full/V1_Multi_FC_10_MTB20_abundant_clones.tsv")
+Multi_V1_full$visit <- "V1"
+
+Multi_V3_full <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/antigen_specific_TCRs_full/V3_Multi_FC_10_MTB20_abundant_clones.tsv")
+Multi_V3_full$visit <- "V3"
+
+Multi <- rbind(Multi_pilot, Multi_V1_full, Multi_V3_full)
+Multi$specificity1 <- "Multi"
+
+full_list <- rbind(MTB, Multi)
+full_list <- full_list %>% filter(donor %in% c(ATB_donors, LTBI_donors))
+full_list <- full_list %>% mutate("Cohort" = case_when(
+  donor %in% ATB_donors ~ "ATB",
+  TRUE ~ "LTBI"
+))
+full_list <- full_list %>% filter(!donor %in% c("TS0012", "TT0105"))
+
+x2 <- full_list %>% group_by(specificity1, Cohort) %>% summarise("TCRs" = n_distinct(Row.names))
+```
+
+```{r}
+#total cells of each cohort found ex vivo
+MTB20.CD4 <- readRDS("~/Desktop/LTBI_ATB_110722/donor_filtered_062722.RDS")
+meta <- MTB20.CD4@meta.data
+meta <- meta %>% filter(!donor %in% c("TS0012, TT0105"))
+
+xx <- meta %>% group_by(Cohort_Visit) %>% summarise("cells" = n())
+```
+
+
+#plotting
+```{r}
+test <- read_csv("~/Desktop/LTBI_ATB_110722/Draft/110624/TCRs_and_cells_mapped_exvivo.csv")
+test2 <- test %>% filter(Type == "TCR")
+test2 <- test2 %>% group_by(Specificity, Cohort_Visit) %>% mutate("Prop" = Value/ Total * 100)
+
+test3 <- test %>% filter(Type == "Cells")
+test3 <- test3 %>% group_by(Specificity, Cohort_Visit) %>% mutate("Prop" = Value/ Total * 100)
+```
+
+```{r}
+ggplot(data=test2, aes(x=Cohort_Visit, y=Prop, fill=Specificity)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_fill_manual(values = c("darkcyan", "orange")) + 
+  scale_y_continuous(limits = c(0,10), breaks = c(0,2,4,6,8,10)) + 
+  theme_minimal()
+
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/prop_PDI_TCR_found_ex_vivo.png", width = 29.7, height = 21, units = "cm")
+```
+
+#DR frequencies. 
+```{r}
+Flow_data <- read_csv("~/Desktop/LTBI_ATB_110722/Draft/020824/HLADR/DR_FLOW_FREQ.csv")
+Flow_data$Diabetes <- NULL #to remove the diabetes column
+Single_cell <- read_csv("~/Desktop/LTBI_ATB_110722/Draft/020824/HLADR/DR_single_cell_numbers.csv")
+Single_cell$combined_col <- paste(Single_cell$donor, Single_cell$Cohort_Visit, sep = "_")
+Single_cell <- Single_cell %>% filter(!donor %in% c("TT0105", "TS0012"))
+samples <- unique(Single_cell$combined_col)
+LTBI <- Single_cell %>% filter(Cohort_Visit == "LTBI")
+LTBI <- unique(LTBI$donor)
+TBneg <- Single_cell %>% filter(Cohort_Visit == "TBneg")
+TBneg <- unique(TBneg$donor)
+ATB <- Single_cell %>% filter(Cohort_Visit == "ATB_V1")
+ATB <- unique(ATB$donor)
+```
+
+```{r}
+Flow_data_longer <- Flow_data %>% pivot_longer(!c(donor, Cohort, Visit, Cohort_Visit), names_to = "DR_status", values_to = "Freq_of_parent")
+
+DR_pos_clusters <- c(1, 4, 6, 7)
+donors <- unique(Single_cell$donor)
+my_list <- donors[-(length(donors)-1)]
+
+Flow_data_longer1 <- Flow_data_longer %>% filter(DR_status == "DRneg" & donor %in% my_list)
+
+Single_cell1 <- Single_cell %>% group_by(donor, Cohort_Visit, seurat_clusters) %>% summarise(cells = sum(cells))
+Single_cell1 <- Single_cell1 %>% filter(!seurat_clusters %in% DR_pos_clusters)
+```
+
+```{r}
+Flow_data_longer1$Cohort_Visit <- factor(Flow_data_longer1$Cohort_Visit, levels = c("TBneg", "LTBI", "ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4"))
+
+ggplot(Flow_data_longer1, aes(x = Cohort_Visit, y = Freq_of_parent)) + geom_boxplot() + geom_point(aes(color = Cohort_Visit), size = 5, alpha = 0.5) + scale_color_manual(values = c("ATB_V1" = "darkred", "LTBI" = "blue", "TBneg" = "green", "ATB_V2" = "lightpink4", "ATB_V3" = "lightpink3", "ATB_V4" = "grey")) + geom_line(aes(group = donor), color = "black") + scale_y_continuous(trans = "log10") + theme_classic() + theme(axis.text.x = element_blank())
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/081224/plot/DR_neg_flow_data.png", height = 8, width = 15, units = "in")
+```
+
+```{r}
+Flow_data_wider_LTBI <- Flow_data_longer1 %>% filter(Cohort_Visit == "LTBI") %>% 
+  dplyr::select(donor, Freq_of_parent, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = Freq_of_parent)
+
+Flow_data_wider_ATBV1 <- Flow_data_longer1 %>% filter(Cohort_Visit == "ATB_V1") %>% 
+  dplyr::select(donor, Freq_of_parent, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = Freq_of_parent)
+
+Flow_data_wider_TBneg <- Flow_data_longer1 %>% filter(Cohort_Visit == "TBneg") %>% 
+  dplyr::select(donor, Freq_of_parent, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = Freq_of_parent)
+
+test1 <- wilcox.test(Flow_data_wider_LTBI$LTBI, Flow_data_wider_ATBV1$ATB_V1, correct = T, paired = F)
+p_value1 <-test1$p.value
+adjusted_p_value <- p.adjust(p_value1, method = "bonferroni")
+adjusted_p_value
+
+test2 <- wilcox.test(Flow_data_wider_TBneg$TBneg, Flow_data_wider_ATBV1$ATB_V1, correct = T, paired = F)
+p_value1 <-test2$p.value
+adjusted_p_value <- p.adjust(p_value1, method = "bonferroni")
+adjusted_p_value
+```
+```{r}
+Merged_dataframe_wider <- Flow_data_longer1 %>% 
+  dplyr::select(donor, Cohort, Cohort_Visit, Freq_of_parent) %>%
+  filter(Cohort_Visit %in% c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4")) %>% 
+  pivot_wider(names_from = Cohort_Visit, values_from = Freq_of_parent)
+#head(Master_file3) #this is what the table will look like 
+
+
+V1_vs_V2<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V2)
+V1_vs_V2
+
+# Extract the p-value from the test result
+p_value <- V1_vs_V2$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V3<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V3)
+V1_vs_V3
+p_value <- V1_vs_V3$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V4<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V4)
+V1_vs_V4
+p_value <- V1_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V2_vs_V4<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V2, Merged_dataframe_wider$ATB_V4)
+V2_vs_V4
+p_value <- V2_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+#similarly you can compare all your visits. But I see a lot of your values are missing for the later visits, which is going to be a problem.... Your significance for paired analysis is going to drop drastically because for most visits you have only one value---which will not do. You cant accurately do a paired analysis :/ 
+```
+
+
+#adjusted frequencies
+
+```{r}
+Merged_dataframe <- merge(Single_cell1, Flow_data_longer1, by = c("donor", "Cohort_Visit"))
+
+#Adjust the number of DR+ and DR- cells in each cluster to their expected numbers based on flow data 
+
+Merged_dataframe <- Merged_dataframe %>% group_by(donor, Cohort_Visit) %>% mutate("Freq" = cells/ sum(cells))
+
+Merged_dataframe <- Merged_dataframe %>% mutate("adjusted" = Freq * Freq_of_parent)
+
+Merged_dataframe$Cohort_Visit <- factor(Merged_dataframe$Cohort_Visit, levels = c("TBneg", "LTBI", "ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4"))
+```
+
+```{r}
+#ggplot(Merged_dataframe, aes(x = Cohort_Visit, y = adjusted)) + geom_boxplot() + geom_point(aes(color = Cohort_Visit), size = 5, alpha = 0.5) + scale_color_manual(values = c("ATB_V1" = "red", "LTBI" = "blue", "TBneg" = "green", "ATB_V2" = "burlywood", "ATB_V3" = "lightpink4", "ATB_V4" = "beige")) + stat_compare_means(paired = FALSE, hide.ns = TRUE, label.y = c(1, 0.75, 1, 1.25, 2), ref.group = "ATB_V1", size = 10, aes(group=Cohort_Visit), label = "p.signif", symnum.args = list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", "ns"))) +  geom_line(aes(group = donor), color = "grey") + scale_y_continuous(trans = "log10") + theme_classic() + theme(axis.text.x = element_blank()) + facet_wrap(~seurat_clusters)
+
+ggplot(Merged_dataframe, aes(x = Cohort_Visit, y = adjusted)) + geom_boxplot() + geom_point(aes(color = Cohort_Visit), size = 5, alpha = 0.5) + scale_color_manual(values = c("ATB_V1" = "darkred", "LTBI" = "blue", "TBneg" = "green", "ATB_V2" = "lightpink4", "ATB_V3" = "lightpink3", "ATB_V4" = "grey")) + geom_line(aes(group = donor), color = "black") + scale_y_continuous(trans = "log10") + theme_classic() + theme(axis.text.x = element_blank()) + facet_wrap(~seurat_clusters)
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/081224/plot/DR_neg_clusters.png", height = 8, width = 15, units = "in")
+```
+
+
+```{r}
+Flow_data_wider_LTBI <- Merged_dataframe %>% filter(Cohort_Visit == "LTBI" & seurat_clusters == 10) %>% 
+  dplyr::select(donor, adjusted, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = adjusted)
+
+Flow_data_wider_ATBV1 <- Merged_dataframe %>% filter(Cohort_Visit == "ATB_V1" & seurat_clusters == 10) %>% 
+  dplyr::select(donor, adjusted, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = adjusted)
+
+Flow_data_wider_TBneg <- Merged_dataframe %>% filter(Cohort_Visit == "TBneg" & seurat_clusters == 10) %>% 
+  dplyr::select(donor, adjusted, Cohort_Visit) %>%
+  pivot_wider(names_from = Cohort_Visit, values_from = adjusted)
+
+test1 <- wilcox.test(Flow_data_wider_LTBI$LTBI, Flow_data_wider_ATBV1$ATB_V1, correct = T, paired = F)
+p_value1 <-test1$p.value
+adjusted_p_value <- p.adjust(p_value1, method = "bonferroni")
+adjusted_p_value
+
+test2 <- wilcox.test(Flow_data_wider_TBneg$TBneg, Flow_data_wider_ATBV1$ATB_V1, correct = T, paired = F)
+p_value1 <-test2$p.value
+adjusted_p_value <- p.adjust(p_value1, method = "bonferroni")
+adjusted_p_value
+```
+
+
+```{r}
+Merged_dataframe_wider <- Merged_dataframe %>% filter(seurat_clusters== 10) %>% 
+  dplyr::select(donor, Cohort, Cohort_Visit, adjusted) %>%
+  filter(Cohort_Visit %in% c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4")) %>% 
+  pivot_wider(names_from = Cohort_Visit, values_from = adjusted)
+#head(Master_file3) #this is what the table will look like 
+
+
+V1_vs_V2<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V2)
+V1_vs_V2
+
+# Extract the p-value from the test result
+p_value <- V1_vs_V2$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V3<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V3)
+V1_vs_V3
+p_value <- V1_vs_V3$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V4<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V1, Merged_dataframe_wider$ATB_V4)
+V1_vs_V4
+p_value <- V1_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V2_vs_V4<- robustrank::pm.wilcox.test(Merged_dataframe_wider$ATB_V2, Merged_dataframe_wider$ATB_V4)
+V2_vs_V4
+p_value <- V2_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+#similarly you can compare all your visits. But I see a lot of your values are missing for the later visits, which is going to be a problem.... Your significance for paired analysis is going to drop drastically because for most visits you have only one value---which will not do. You cant accurately do a paired analysis :/ 
+```
+
+
+################Plotting######################
+```{r}
+
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_LTBI_test_abundant_clones.tsv")
+new_metadata3 <- new_metadata2 %>% filter(chain.x == "TRA" & chain.y == "TRB")
+
+x <- new_metadata3 %>% 
+  group_by(donor, Cohort_Visit, seurat_clusters, MTB) %>% 
+  summarise(clone_size = n())
+```
+
+```{r}
+write_csv(x, "~/Desktop/LTBI_ATB_110722/Draft/091924/summary_stats_LTBI_TCR_abundant_clones.csv")
+```
+
+
+##LTBI
+```{r}
+x <- read_csv("~/Desktop/LTBI_ATB_110722/Draft/091924/summary_stats_LTBI_TCR_abundant_clones.csv")
+```
+
+```{r}
+x2 <- as.data.frame(x %>% filter(Cohort_Visit == "LTBI"))
+```
+
+#fill in the missing data
+```{r}
+master_complete <- x2 %>% complete(nesting(Cohort_Visit, seurat_clusters), donor, MTB, fill = list(clone_size=0) )
+```
+
+```{r}
+magic_fun <- function(x){
+  return (x+1)}
+```
+
+```{r}
+master_complete$new_clonesize <- apply(master_complete[5], 1, magic_fun)
+```
+
+#donor
+```{r}
+master_complete <- master_complete %>% 
+  filter(MTB %in% c("MTB", "Multi")) %>%
+  group_by(donor, MTB) %>%
+  mutate("Proportion"=100*(new_clonesize/sum(new_clonesize))) %>%
+  rstatix::convert_as_factor(donor, Cohort_Visit, seurat_clusters, MTB)
+head(x2, 3)
+```
+
+```{r}
+master_complete$MTB <- factor(master_complete$MTB, levels = c("MTB", "Multi"))
+```
+
+
+```{r}
+p1 = master_complete %>% filter(MTB == "Multi") %>% 
+  ggplot(aes(x= seurat_clusters, y= Proportion, colour = seurat_clusters)) + 
+  geom_boxplot() + geom_point(size = 8, alpha = 0.5) + 
+  scale_x_discrete(limits = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10")) +
+  scale_color_manual(values = c("#F8766D", "#DB8E00", "#AEA200", "#64B200", "#00BD5C", "#00C1A7", "#00BADE", "#00A6FF", "#B385FF", "#EF67EB", "#FF63B6")) + 
+  scale_y_continuous(limits = c(0,100), breaks = c(0,20,40,60,80,100))
+
+p1 + theme(strip.text.x = element_text(size = 25, face = "bold")) + ylab("Proportion of cells") + theme_classic() +
+  theme( 
+  text = element_text(size = 25), 
+  plot.title = element_text(size=25, face="bold.italic"),
+  axis.title.y = element_text(size=25, face="bold"), 
+  axis.title.x = element_text(size=25, face="bold")
+) + facet_wrap(~ MTB)
+
+#ggsave("~/Desktop/LTBI_ATB_110722/Integrating_new_sequences_to_MTB20_0823/Fisher_test_abundant_clones/LTBI_V1_antigen_specific_cells_per_donor_Full_MTB20_each_100.pdf", width = 15, height = 8.5, units = "in")
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/LTBI_Multi_specific_cells.png", width = 15, height = 8.5, units = "in")
+```
+
+##ATB
+#cleaned up to remove TT0105 and TS0012
+```{r}
+x <- read_csv("~/Desktop/LTBI_ATB_110722/Draft/091924/summary_stats_ATB_TCR_abundant_clones.csv")
+```
+
+```{r}
+x2 <- as.data.frame(x %>% filter(Cohort_Visit == "ATB_V1"))
+```
+
+#fill in the missing data
+```{r}
+master_complete <- x2 %>% complete(nesting(Cohort_Visit, seurat_clusters), donor, MTB, fill = list(clone_size=0) )
+```
+
+```{r}
+master_complete$new_clonesize <- apply(master_complete[5], 1, magic_fun)
+```
+
+#donor
+```{r}
+master_complete <- master_complete %>% 
+  filter(MTB %in% c("MTB", "Multi")) %>%
+  group_by(donor, MTB) %>%
+  mutate("Proportion"=100*(new_clonesize/sum(new_clonesize))) %>%
+  rstatix::convert_as_factor(donor, Cohort_Visit, seurat_clusters, MTB)
+head(x2, 3)
+```
+
+```{r}
+master_complete <- master_complete %>% filter(MTB %in% c("MTB", "Multi") & !donor %in% c("TT0105", "TS0012"))
+master_complete$MTB <- factor(master_complete$MTB, levels = c("MTB", "Multi"))
+```
+
+
+```{r}
+p1 = master_complete %>% filter(MTB == "MTB") %>% 
+  ggplot(aes(x= seurat_clusters, y= Proportion, color = seurat_clusters)) + 
+  geom_boxplot() + geom_point(size =8, alpha = 0.5) + 
+  scale_x_discrete(limits = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10")) + 
+  scale_color_manual(values = c("#F8766D", "#DB8E00", "#AEA200", "#64B200", "#00BD5C", "#00C1A7", "#00BADE", "#00A6FF", "#B385FF", "#EF67EB", "#FF63B6")) + 
+  scale_y_continuous(limits = c(0,50), breaks = c(0,10,20,30,40,50))
+
+p1 +  theme_classic() + 
+  theme(strip.text.x = element_text(size = 25, face = "bold")) + ylab("% of Mtb_specific T cells") + 
+  theme( 
+  text = element_text(size = 25), 
+  plot.title = element_text(size=25, face="bold.italic"),
+  axis.title.y = element_text(size=25, face="bold"), 
+  axis.title.x = element_text(size=25, face="bold")
+)
+
+#ggsave("~/Desktop/LTBI_ATB_110722/Integrating_new_sequences_to_MTB20_0823/Fisher_test_abundant_clones/ATB_V4_antigen_specific_cells_per_donor_Full_MTB20_each_100.pdf", width = 15, height = 8.5, units = "in")
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/ATB_V1_MTB_specific_cells.png", width = 15, height = 8.5, units = "in")
+```
+
+#longitudinal analysis
+
+```{r}
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_ATB_test_abundant_clones.tsv")
+new_metadata2 <- new_metadata2 %>% filter(!donor %in% c("TT0105", "TS0012") & chain.x == "TRA" & chain.y == "TRB")
+
+x <- new_metadata2 %>% 
+  group_by(donor, Cohort_Visit, seurat_clusters, MTB) %>% 
+  summarise(clone_size = n())
+```
+
+```{r}
+x2 <- as.data.frame(x %>% filter(MTB %in% c("Multi", "MTB") & Cohort_Visit %in% c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4")))
+master_complete <- x2 %>% complete(nesting(seurat_clusters), donor, MTB, Cohort_Visit, fill = list(clone_size=0))
+master_complete$new_clonesize <- apply(master_complete[5], 1, magic_fun)
+
+#donor
+
+master_complete <- master_complete %>% 
+  group_by(donor, MTB, Cohort_Visit) %>%
+  mutate("Proportion"=100*(new_clonesize/sum(new_clonesize))) %>%
+  rstatix::convert_as_factor(donor, Cohort_Visit, seurat_clusters, MTB)
+
+master_complete$MTB <- factor(master_complete$MTB, levels = c("MTB", "Multi"))
+```
+
+```{r}
+cluster <- master_complete %>% filter(seurat_clusters == 1 & MTB == "Multi") 
+  
+ggplot(cluster, aes(x= Cohort_Visit, y= Proportion, color = Cohort_Visit)) + 
+  geom_boxplot() + geom_point(aes(group = donor), size = 5, alpha = 0.5) + 
+  geom_line(aes(group = donor), color = "darkgrey") +
+  scale_x_discrete(limits = c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4")) + 
+  scale_color_manual(breaks = c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4"), values = c("darkred", "lightpink4", "lightpink3", "grey")) + geom_smooth() + theme_classic() +
+  theme(strip.text.x = element_text(size = 25, face = "bold")) + ylab("Proportion of cells") + geom_smooth()+
+  scale_y_continuous(limits = c(0,100), breaks = c(0,20,40,60,80,100)) + 
+  theme( 
+  text = element_text(size = 30), 
+  plot.title = element_text(size=30, face="bold.italic"),
+  axis.title.y = element_text(size=30, face="bold"),
+  axis.text.x = element_blank(),
+  axis.title.x = element_text(size=30, face="bold")
+)
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/Multi_specific_cell_cluster_1.png", width = 8.5, height = 8.5, units = "in")
+```
+
+```{r}
+Master_file3 <- master_complete %>%
+  dplyr::select(donor, seurat_clusters, Cohort_Visit, Proportion) %>%
+  filter(seurat_clusters == 6 & MTB == "MTB") %>% 
+  pivot_wider(names_from = Cohort_Visit, values_from = Proportion)
+#head(Master_file3) #this is what the table will look like 
+
+
+V1_vs_V2<- robustrank::pm.wilcox.test(Master_file3$ATB_V1, Master_file3$ATB_V2)
+V1_vs_V2
+
+# Extract the p-value from the test result
+p_value <- V1_vs_V2$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V3<- robustrank::pm.wilcox.test(Master_file3$ATB_V1, Master_file3$ATB_V3)
+V1_vs_V3
+p_value <- V1_vs_V3$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V1_vs_V4<- robustrank::pm.wilcox.test(Master_file3$ATB_V1, Master_file3$ATB_V4)
+V1_vs_V4
+p_value <- V1_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V2_vs_V4<- robustrank::pm.wilcox.test(Master_file3$ATB_V2, Master_file3$ATB_V4)
+V2_vs_V4
+p_value <- V2_vs_V4$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+
+V2_vs_V3<- robustrank::pm.wilcox.test(Master_file3$ATB_V2, Master_file3$ATB_V3)
+V2_vs_V3
+p_value <- V2_vs_V3$p.value
+# Perform the Bonferroni correction on the p-value
+adjusted_p_value <- p.adjust(p_value, method = "bonferroni")
+adjusted_p_value
+#similarly you can compare all your visits. But I see a lot of your values are missing for the later visits, which is going to be a problem.... Your significance for paired analysis is going to drop drastically because for most visits you have only one value---which will not do. You cant accurately do a paired analysis :/ 
+```
+
+
+longitudinal analysis (tracking clonotypes)
+```{r}
+new_metadata2 <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_ATB_test_abundant_clones.tsv")
+new_metadata3 <- new_metadata2 %>% filter(!donor %in% c("TT0105, TS0012") & Cohort_Visit == "ATB_V1" & chain.x == "TRA" & chain.y == "TRB" & seurat_clusters == 6 & MTB == "MTB")
+TCRs <- unique(new_metadata3$TRB)
+
+new_metadata4 <- new_metadata2 %>% filter(!donor %in% c("TT0105, TS0012") & Cohort == "ATB" & chain.x == "TRA" & chain.y == "TRB" & TRB %in% TCRs & MTB == "MTB")
+
+x <- new_metadata4 %>% group_by(Cohort_Visit, seurat_clusters) %>% summarise("clones" = sum(n()))
+```
+Clonesizes
+```{r}
+#contig files 
+A <- read.csv("~/Desktop/Filtered_contig_files/A_filtered_contig_annotations.csv")
+#format barcodes because during integration the seurat adds a "unique indentifier" to each barcode from each library
+A$barcode <- paste0(A$barcode, "_1")
+#A['MTB20'] <- "A"
+
+B <- read.csv("~/Desktop/Filtered_contig_files/B_filtered_contig_annotations.csv")
+B$barcode <- paste0(B$barcode, "_2")
+#B['MTB20'] <- "B"
+
+C <- read.csv("~/Desktop/Filtered_contig_files/C_filtered_contig_annotations.csv")
+C$barcode <- paste0(C$barcode, "_3")
+#C['MTB20'] <- "C"
+
+D <- read.csv("~/Desktop/Filtered_contig_files/D_filtered_contig_annotations.csv")
+D$barcode <- paste0(D$barcode, "_4")
+#D['MTB20'] <- "D"
+
+E <- read.csv("~/Desktop/Filtered_contig_files/E_filtered_contig_annotations.csv")
+E$barcode <- paste0(E$barcode, "_5")
+#E['MTB20'] <- "E"
+
+G <- read.csv("~/Desktop/Filtered_contig_files/G_filtered_contig_annotations.csv")
+G$barcode <- paste0(G$barcode, "_6")
+#G['MTB20'] <- "G"
+
+H <- read.csv("~/Desktop/Filtered_contig_files/H_filtered_contig_annotations.csv")
+H$barcode <- paste0(H$barcode, "_7")
+#H['MTB20'] <- "H"
+
+I <- read.csv("~/Desktop/Filtered_contig_files/I_filtered_contig_annotations.csv")
+I$barcode <- paste0(I$barcode, "_8")
+#I['MTB20'] <- "I"
+
+J <- read.csv("~/Desktop/Filtered_contig_files/J_filtered_contig_annotations.csv")
+J$barcode <- paste0(J$barcode, "_9")
+#J['MTB20'] <- "J"
+
+L <- read.csv("~/Desktop/Filtered_contig_files/L_filtered_contig_annotations.csv")
+L$barcode <- paste0(L$barcode, "_10")
+#L['MTB20'] <- "L"
+
+HIPC_3 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_3_filtered_contig_annotations.csv")
+HIPC_3$barcode <- paste0(HIPC_3$barcode, "_11")
+
+HIPC_4 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_4_filtered_contig_annotations.csv")
+HIPC_4$barcode <- paste0(HIPC_4$barcode, "_12")
+
+TCR_total <- as_tibble(rbind(A,B,C,D,E,G,H,I,J,L, HIPC_3, HIPC_4))
+```
+
+```{r}
+new_metadata <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_ATB_test_abundant_clones.tsv")
+new_contig_file <- data.table::as.data.table(TCR_total[,c("barcode", "cdr3", "chain")])
+new_meta <- left_join(new_metadata, new_contig_file, by = "barcode")
+new_meta1 <- new_meta %>% filter(!donor %in% c("TT0105", "TS0012") & chain.x == "TRA" & chain.y == "TRB")
+```
+
+This would need to be done per cluster. 
+```{r}
+library(caret)
+```
+
+```{r}
+new_metadata_ATB <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_ATB_test_abundant_clones.tsv")
+new_metadata_LTBI <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/091924/metadata_LTBI_test_abundant_clones.tsv")
+new_metadata <- rbind(new_metadata_ATB, new_metadata_LTBI)
+metadata1 <- new_metadata %>% filter(seurat_clusters == 1 & MTB == "Multi" & Cohort_Visit %in% c("ATB_V1", "ATB_V2", "ATB_V3", "ATB_V4", "LTBI"))
+```
+
+Downsample
+
+```{r}
+sample_names <- unlist(unique(metadata1$Cohort_Visit))
+
+metadata1$Cohort_Visit <-as.factor(metadata1$Cohort_Visit)
+prop.table(table(metadata1$Cohort_Visit))
+
+set.seed(11)
+traindown <- downSample(x=metadata1, y=metadata1$Cohort_Visit)
+
+table(traindown$Cohort_Visit)
+```
+
+now add clonytype info
+```{r}
+summary1 <- traindown %>% group_by(Cohort_Visit, TRB) %>% summarise(cells = n())
+summary1 <- summary1 %>% group_by(Cohort_Visit) %>% mutate(Frequency1 = (cells / sum(cells))) #calculate freq 
+```
+
+```{r}
+summary1 <- summary1 %>% group_by(TRB, Cohort_Visit) %>% mutate(clonetype3 = case_when(
+  0.3 < Frequency1 ~"Abundant",
+  0 < Frequency1 & Frequency1 <= 0.3 ~ "Rare"))
+
+
+summary1 <- summary1 %>% mutate(clonetype4 = case_when(
+  100 < cells & cells <= 500 ~"Hyperexpanded (100 < X <= 500)",
+  20 < cells & cells <= 100 ~ "Large (20 < X <= 100)", 
+  5 < cells & cells <= 20 ~ "Medium (5 < X <= 20)",
+  1 < cells & cells <= 5 ~ "Small (1 < X <= 5)",
+  0 < cells & cells <= 1 ~ "Single (X <= 1)"))
+
+default <- c("#F8766D", "#DB8E00", "#AEA200", "#64B200", "#00BD5C", "#00C1A7", "#00BADE", "#00A6FF", "#B385FF", "#EF67EB", "#FF63B6")
+
+summary1$clonetype4 <- factor(summary1$clonetype4, levels = c("Hyperexpanded (100 < X <= 500)", "Large (20 < X <= 100)", "Medium (5 < X <= 20)", "Small (1 < X <= 5)", "Single (X <= 1)"))
+```
+
+
+```{r}
+ggplot(summary1, aes(x = Cohort_Visit, y = Frequency1, fill = clonetype4)) + geom_bar(stat = "identity") + scale_fill_manual(values = c("Hyperexpanded (100 < X <= 500)" = "#F8766D", "Large (20 < X <= 100)" = "#64B200", "Medium (5 < X <= 20)" = "#00BADE", "Small (1 < X <= 5)" = "#B385FF", "Single (X <= 1)" = "#FF63B6")) + theme_classic()
+
+#ggsave("~/Desktop/LTBI_ATB_110722/Draft/020824/plot/LTBI_cluster_1_Multi_clonotype.pdf")
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/091924/plot/cluster_1_Multi_clonotype_329cells.png")
+```
+
+
+Gene usage
+Calculating gene usage
+
+```{r}
+#contig files 
+A <- read.csv("~/Desktop/Filtered_contig_files/A_filtered_contig_annotations.csv")
+#format barcodes because during integration the seurat adds a "unique indentifier" to each barcode from each library
+A$barcode <- paste0(A$barcode, "_1")
+#A['MTB20'] <- "A"
+
+B <- read.csv("~/Desktop/Filtered_contig_files/B_filtered_contig_annotations.csv")
+B$barcode <- paste0(B$barcode, "_2")
+#B['MTB20'] <- "B"
+
+C <- read.csv("~/Desktop/Filtered_contig_files/C_filtered_contig_annotations.csv")
+C$barcode <- paste0(C$barcode, "_3")
+#C['MTB20'] <- "C"
+
+D <- read.csv("~/Desktop/Filtered_contig_files/D_filtered_contig_annotations.csv")
+D$barcode <- paste0(D$barcode, "_4")
+#D['MTB20'] <- "D"
+
+E <- read.csv("~/Desktop/Filtered_contig_files/E_filtered_contig_annotations.csv")
+E$barcode <- paste0(E$barcode, "_5")
+#E['MTB20'] <- "E"
+
+G <- read.csv("~/Desktop/Filtered_contig_files/G_filtered_contig_annotations.csv")
+G$barcode <- paste0(G$barcode, "_6")
+#G['MTB20'] <- "G"
+
+H <- read.csv("~/Desktop/Filtered_contig_files/H_filtered_contig_annotations.csv")
+H$barcode <- paste0(H$barcode, "_7")
+#H['MTB20'] <- "H"
+
+I <- read.csv("~/Desktop/Filtered_contig_files/I_filtered_contig_annotations.csv")
+I$barcode <- paste0(I$barcode, "_8")
+#I['MTB20'] <- "I"
+
+J <- read.csv("~/Desktop/Filtered_contig_files/J_filtered_contig_annotations.csv")
+J$barcode <- paste0(J$barcode, "_9")
+#J['MTB20'] <- "J"
+
+L <- read.csv("~/Desktop/Filtered_contig_files/L_filtered_contig_annotations.csv")
+L$barcode <- paste0(L$barcode, "_10")
+#L['MTB20'] <- "L"
+
+HIPC_3 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_3_filtered_contig_annotations.csv")
+HIPC_3$barcode <- paste0(HIPC_3$barcode, "_11")
+
+HIPC_4 <- read.csv("~/Desktop/Filtered_contig_files/HIPC_tube_4_filtered_contig_annotations.csv")
+HIPC_4$barcode <- paste0(HIPC_4$barcode, "_12")
+
+TCR_total <- as_tibble(rbind(A,B,C,D,E,G,H,I,J,L, HIPC_3, HIPC_4))
+
+```
+
+```{r}
+TCR_total1 <- TCR_total %>% filter(chain == "TRB") #change to TRA or TRB
+new_metadata_ATB <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_ATB_test_abundant_clones.tsv")
+new_metadata_ATB <- new_metadata_ATB %>% filter(!donor %in% c("TT0105", "TS0012") & chain.x == "TRA" & chain.y == "TRB")
+new_metadata_LTBI <- read_tsv("~/Desktop/LTBI_ATB_110722/Draft/110624/metadata_LTBI_test_abundant_clones.tsv")
+new_metadata_LTBI <- new_metadata_LTBI %>% filter(chain.x == "TRA" & chain.y == "TRB")
+metadata <- rbind(new_metadata_ATB, new_metadata_LTBI)
+new_metadata <- left_join(metadata, TCR_total1, by = "barcode", relationship = "many-to-many")
+```
+
+
+#not seperating the cohorts
+```{r}
+metadata1 <- new_metadata %>% filter(seurat_clusters == 1 & !MTB %in% c("Multi", "MTB"))
+#metadata1 <- new_metadata %>% filter(seurat_clusters %in% c(1) & MTB == "Multi")
+donors <- unique(metadata1$donor)
+
+summary_TCR_gene <- metadata1 %>% group_by(donor, v_gene) %>% summarise(count = n())
+summary_TCR_gene <- na.omit(summary_TCR_gene)
+
+#add TRAV1 and TRAV2
+#new_gene <- data.frame(donor = c("TS0175", "TS0004"), v_gene = c("TRAV1-2", "TRAV1-2"), count = c(0, 0))
+#summary_TCR_gene <- rbind(summary_TCR_gene, new_gene)
+summary_TCR_gene$MTB20 <- "MTB20"
+#gene family
+TCR_gene_order <- summary_TCR_gene$v_gene
+summary_TCR_gene$gene_fam <-summary_TCR_gene$v_gene %>% 
+  strsplit("-", fixed = TRUE) %>% 
+  sapply(function(x) x[1])
+  
+test <- summary_TCR_gene %>%
+  group_by(MTB20, gene_fam, donor) %>%
+  summarise(total_count = sum(count, na.rm = TRUE))
+
+test2 <- test %>% group_by(MTB20) %>% tidyr::complete(donor, gene_fam, fill = list(total_count = 0))
+
+magic_fun <- function(x){
+  return (x+1)}
+
+test2$new_counts <- apply(test2[4], 1, magic_fun)
+
+  
+test2 <- test2 %>% group_by(donor) %>% mutate("norm_freq" = new_counts / sum(new_counts))
+
+write_csv(test2, "~/Desktop/LTBI_ATB_110722/Draft/110624/gene_usage/normalized_freq_cluster1_remaining_cells_TRB.csv")
+```
+
+
+```{r}
+p<-ggplot(data=test2, aes(x=gene_fam, y=norm_freq)) +
+  geom_boxplot() + geom_point(alpha = 0.5, size = 5) + 
+  theme_classic() + theme(axis.text.x = element_text(size = 5, face = "bold"), axis.text.y = element_text(face = "bold")) + theme(axis.text.x = element_text(size = 20, angle = 90), axis.text.y = element_text(size = 15)) + scale_y_continuous(trans = "log10") #+ coord_flip()
+p
+
+ggsave("~/Desktop/LTBI_ATB_110722/Draft/110624/plots/Multi_TCRB_cluster1.png", height = 8.5, width = 15, units = "in")
+```
+
+
+
+
+
